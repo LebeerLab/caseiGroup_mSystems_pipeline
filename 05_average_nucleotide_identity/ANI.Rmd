@@ -1,0 +1,182 @@
+---
+title: "ANI"
+author: "Sander Wuyts"
+date: "23 02 2017"
+output: html_document
+---
+
+# Read in tree
+
+```{R}
+setwd("/media/harddrive/caseiGroup/05_average_nucleotide_identity/pyani_output/")
+library(ggplot2)
+library(ggtree)
+library(ape)
+
+tree <- read.tree('/media/harddrive/caseiGroup/Trees/RAxML_bipartitions.caseigroup')
+
+# Root tree
+tree_r <- ape::root(tree, "outgroup")
+# Remove outgroup
+tree_r_wooutroup <- drop.tip(tree_r, "outgroup")
+
+# Test ggtree
+p <- ggtree(tree_r_wooutroup) +  geom_tree()
+p
+
+
+
+# Get the label order
+d <- fortify(tree_r_wooutroup)
+dd <- subset(d, isTip)
+order <- dd$label[order(dd$y,decreasing=T)]
+```
+
+Tree seems okay now!
+
+# ANIb
+Read in data and reorder dataframes
+```{r}
+
+ANIb <- read.table('/media/harddrive/caseiGroup/05_average_nucleotide_identity/pyani_output/ANIb/ANIb_percentage_identity.tab')
+
+ANIb <- ANIb[order,order]
+
+ANIbplot <- gheatmap(p, ANIb,width=15,colnames=F, low="yellow", high="red",color=NA,offset=0.1) + 
+  ggtitle("ANIb") + scale_fill_gradient(high="#132B43",low="#56B1F7")
+ANIbplot
+```
+
+There seems to be an outlier, Let's look at its ANIs
+
+```{R}
+ANIb["GCA_000958525",]
+```
+Apparantly this one, has a lower ANI value in the A clade (0.96) compared to the rest which usulayy have around 0.98.
+
+Looking at the quality of this genome, this one has 1436 contigs, so it could be that its due to the fact that it's highly fragmented;
+
+
+# TETRA
+
+```{r}
+TETRA <- read.table("/media/harddrive/caseiGroup/05_average_nucleotide_identity/pyani_output/TETRA/TETRA_correlations.tab")
+TETRA <- TETRA[order,order]
+
+TETRAplot <- gheatmap(p, TETRA,width=15,colnames=F, low="yellow", high="red",color=NA, offset=0.1)  + 
+  ggtitle("TETRA") + scale_fill_gradient(high="#132B43",low="#56B1F7")
+TETRAplot
+```
+
+
+
+# Combining
+```{R}
+library(gridExtra)
+grid.arrange(ANIbplot,TETRAplot,nrow=2)
+plot <- arrangeGrob(ANIbplot,TETRAplot,nrow=3)
+#png(filename="/media/harddrive/caseiGroup/05_average_nucleotide_identity/Realplot.png",dpi=300,plot=plot,height=10)
+```
+
+# Min ANI values
+
+Get genome names per clade
+
+```{r}
+genomeClade <- read.table("/media/harddrive/caseiGroup/Trees/genomeTableWithClades.tsv")
+cladeA <- as.character(genomeClade[which(genomeClade$V3=="cladeA"),"V1"])
+cladeB <- as.character(genomeClade[which(genomeClade$V3=="cladeB"),"V1"])
+cladeC <- as.character(genomeClade[which(genomeClade$V3=="cladeC"),"V1"])
+```
+
+Select cladeA
+
+```{r}
+ANIb_cladeA <- ANIb[cladeA,cladeA]
+
+# Melt Df
+library(reshape2)
+ANIb_cladeA_molten <- melt(ANIb_cladeA)
+ANIb_cladeA_molten$clade <- "cladeA"
+
+min(ANIb_cladeA_molten$value)
+mean(ANIb_cladeA_molten$value)
+```
+
+```{r}
+ANIb_cladeB <- ANIb[cladeB,cladeB]
+# Melt Df
+ANIb_cladeB_molten <- melt(ANIb_cladeB)
+
+min(ANIb_cladeB_molten$value)
+mean(ANIb_cladeB_molten$value)
+ANIb_cladeB_molten$clade <- "cladeB"
+```
+
+```{r}
+ANIb_cladeC <- ANIb[cladeC,cladeC]
+# Melt Df
+ANIb_cladeC_molten <- melt(ANIb_cladeC)
+
+min(ANIb_cladeC_molten$value)
+mean(ANIb_cladeC_molten$value)
+ANIb_cladeC_molten$clade <- "cladeC"
+```
+
+Plot them all together
+
+```{r}
+#merge df
+ANIb_molten <- rbind(ANIb_cladeA_molten,ANIb_cladeB_molten,ANIb_cladeC_molten)
+
+plot <- ggplot(ANIb_molten)
+plot + geom_jitter(aes(x=clade,y=value, colour=clade)) + scale_color_manual(values=c("#a65628","#1b9e77", "#984ea3"))
+```
+
+# Min TETRA values
+
+Get genome names per clade
+
+Select cladeA
+
+```{r}
+TETRA_cladeA <- TETRA[cladeA,cladeA]
+
+# Melt Df
+library(reshape2)
+TETRA_cladeA_molten <- melt(TETRA_cladeA)
+TETRA_cladeA_molten$clade <- "cladeA"
+
+min(TETRA_cladeA_molten$value)
+mean(TETRA_cladeA_molten$value)
+```
+
+```{r}
+TETRA_cladeB <- TETRA[cladeB,cladeB]
+# Melt Df
+TETRA_cladeB_molten <- melt(TETRA_cladeB)
+
+min(TETRA_cladeB_molten$value)
+mean(TETRA_cladeB_molten$value)
+TETRA_cladeB_molten$clade <- "cladeB"
+```
+
+```{r}
+TETRA_cladeC <- TETRA[cladeC,cladeC]
+# Melt Df
+TETRA_cladeC_molten <- melt(TETRA_cladeC)
+
+min(TETRA_cladeC_molten$value)
+mean(TETRA_cladeC_molten$value)
+TETRA_cladeC_molten$clade <- "cladeC"
+```
+
+Plot them all together
+
+```{r}
+#merge df
+TETRA_molten <- rbind(TETRA_cladeA_molten,TETRA_cladeB_molten,TETRA_cladeC_molten)
+
+plot <- ggplot(TETRA_molten)
+plot + geom_jitter(aes(x=clade,y=value, colour=clade)) + scale_color_manual(values=c("#a65628","#1b9e77", "#984ea3"))
+```

@@ -1,0 +1,170 @@
+---
+title: "Glycosyltransferases in the Casei Group"
+author: "Stijn Wittouck"
+date: "15th of June 2017"
+output: 
+  html_document:
+    depth: 2
+    number_sections: yes
+    theme: united
+    toc: yes
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = T, message = F, warning = F)
+```
+
+```{r}
+library(tidyverse)
+library(stringr)
+```
+
+# Data preparation
+
+We will load the necessary (tidy) tables: 
+
+* **T_gene** (the version with gene coordinates in the genome (as opposed to in the contigs))
+* **T_genome**: we need to be able to select genomes of a given clade
+* **T_orthogroup**: we need to know which orthogroups are the GTs
+
+```{r}
+load(file = "intermediate/T_gene_withCo.Robject")
+load(file = "intermediate/T_genome.Robject")
+load(file = "intermediate/T_orthogroup.Robject")
+```
+
+Let's add the genome information as well as the orthogroup information to the gene table: 
+
+```{r}
+T_gene <- T_gene_withCo %>%
+  left_join(T_genome) %>%
+  left_join(T_orthogroup)
+```
+
+Now we give all genes a "position number" within their genome (not contig, because the contigs are ordered!) - this is needed for later clustering of GT genes. We then extract only the GT genes from the gene table. There are two types of GT genes:
+
+* cazyFam families with "GT" in their names
+* the extra GT families downloaded from pFam: Bac_transf, DAD and OST3_OST6
+
+And finally, we cluster the GTs based on the number of genes in between them: if there are two or less genes between a GT and the previous GT, we consider them part of the same gene cluster. 
+
+```{r}
+T_gts <- T_gene %>%
+  arrange(genome, start_inGenome) %>%
+  group_by(genome) %>%
+  mutate(position_number = 1:n()) %>%
+  filter(str_detect(cazyFam, "GT|Bac|OST")) %>%
+  mutate(cluster_with_previous = ifelse(position_number - lag(position_number) <= 3, T, F)) %>%
+  ungroup() %>%
+  mutate(position_in_cluster = 1)
+
+for (i in 1:nrow(T_gts)) {
+  cluster_with_previous <- T_gts[i, "cluster_with_previous"]
+  if (! is.na(cluster_with_previous) & cluster_with_previous) {
+    T_gts[i, "position_in_cluster"] <- T_gts[i - 1, "position_in_cluster"] + 1
+  }
+}
+```
+
+# Clustering analysis of GTs
+
+Goals:
+
+* Characterize the variation of GT-rich clusters within and between the three Casei group clades. 
+* Look for large GT clusters; these might be part of existing and possibly novel EPS clusters. 
+
+## GT-rich clusters in clade A
+
+We extract the GCA numbers of all closed genomes of clade A (L. paracasei) from a txt file. We make a gene table for these genomes only. 
+
+```{r}
+cladeA_genomes <- read_table(file = "input/strain_selections/cladeA_completeAssemblies.txt", col_names = F) %>%
+  pull(X1)
+
+T_gts_cladeA <- T_gts %>%
+  filter(genome %in% cladeA_genomes)
+```
+
+Now we can plot some stuff
+
+```{r}
+plot_cazyFams <- function(T_gts) {
+  ggplot(T_gts, aes(x = start_inGenome, y = position_in_cluster, col = cazyFam)) +
+  geom_point() +
+  facet_wrap(~ strain_ordered, scales = "free_y", ncol = 1) +
+  scale_color_brewer(palette = "Paired") +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.grid = element_blank(),
+        panel.background = element_blank())
+}
+
+plot_cazyFams(T_gts_cladeA)
+ggsave("results/gts_in_genome_cladeA_closed_genomes.png", width = 30, height = 30, units = "cm")
+```
+
+## GT-rich clusters in clade B
+
+We will plot all genomes of clade B (L. casei), also the contig-level ones, because there are only ten in total. 
+
+```{r}
+T_gts_cladeB <- T_gts %>%
+  filter(clade == "cladeB")
+plot_cazyFams(T_gts_cladeB)
+ggsave("results/gts_in_genome_cladeB_all_genomes.png", width = 30, height = 20, units = "cm")
+```
+
+## GT-rich clusters in clade C
+
+We extract the GCA numbers of all closed genomes of clade C (L. rhamnosus) from a txt file. We make a gene table for these genomes only. 
+
+```{r}
+cladeC_genomes <- read_table(file = "input/strain_selections/cladeC_completeAssemblies.txt", col_names = F) %>%
+  pull(X1)
+
+T_gts_cladeC <- T_gts %>%
+  filter(genome %in% cladeC_genomes)
+```
+
+Let's plot them: 
+
+```{r}
+plot_cazyFams(T_gts_cladeC)
+ggsave("results/gts_in_genome_cladeC_closed_genomes.png", width = 30, height = 15, units = "cm")
+```
+
+After searching manually in a genome browser for quite some time, we managed to locate the EPS cluster described by Lebeer et al. (2009) in LGG. This cluster should contain six GTs, but we could find only four of these using our approach: welE (Bac_transf; priming GT!), welF (GT4), welH (GT2) and welI (GT4). The lengths of these genes reported in the paper are approximately equal to the lengths we find here. 
+
+## Selection of genomes across clades
+
+To make the comparison between clades easier, we visualize the GTs in a random selection of three genomes from each clade. 
+
+```{r}
+selection_genomes <- read_csv(file = "input/strain_selections/clades_selection.txt", col_names = F) %>%
+  pull(X1)
+
+T_gts_selection <- T_gts %>%
+  filter(genome %in% selection_genomes)
+```
+
+Let's plot them: 
+
+```{r}
+plot_cazyFams(T_gts_selection)
+ggsave("results/gts_in_genome_selection.png", width = 30, height = 30, units = "cm")
+```
+
+## Observations from these figures
+
+Some observations:
+
+* There are a lot of lone GTs or GT pairs present in the genomes. Most of these are very nicely conserved and occur in every genome! These are, more or less in order of appearance: 2, 51, 4|4, 8|8, 2, 28, 51, 51, 35|5, 2, 4|4, 4.
+* Some lone GTs or GT pairs are clade- or strain- specific. Sometimes, some copy-number variation can be seen, probably due to a recent duplication. 
+* There are five different GT clusters that have three or more GTs in at least one strain. These are the following:
+    + **2|83|83**: missing one GT83 in clade B. Has an additional GT2 in two clade A strains. 
+    + **2|8|4|4**: specific to clade B!! A smaller version of it is present in clades A and C. 
+    + **4|4|8|8|8**: specific to clade B, and only in four strains of the six (among which is AMBR2)!! Not at all present in the other clades!! (Except maybe the 4|4 in clade C.)
+    + **B-containing cluster 1**: present in all genomes but extremely variable! 
+    + **B-containing cluster 2**: present in (almost) all genomes but extremely variable! This is the known Lactobacillus EPS cluster. The fact that it has only one GT in some of the genomes might indicate that we do not yet find all GTs in the genomes. 
+

@@ -1,0 +1,18 @@
+#!/bin/bash -l
+#PBS -l walltime=48:00:00
+#PBS -l nodes=1:ppn=20
+
+pin_sequences=${VSC_SCRATCH}/caseiGroup_orthofinder/caseiGroup_proteins/
+pin_orthofinder=${VSC_DATA}/software/OrthoFinder-1.1.4/
+
+module load BLAST+/2.6.0-intel-2016b-Python-2.7.12
+module load MCL/14.137-intel-2016b
+
+export PATH=$PATH:${pin_orthofinder}
+
+# orthofinder -h
+orthofinder -f $pin_sequences -M msa -os -t 20
+
+cd ${VSC_SCRATCH}/caseiGroup_orthofinder/
+
+tar -czf ${VSC_DATA}/caseiGroup_orthofinder/orthofinder_run.tgz caseiGroup_proteins

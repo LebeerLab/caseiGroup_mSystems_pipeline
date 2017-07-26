@@ -1,0 +1,177 @@
+---
+title: "Analysis of GT-rich gene cluster specific to clade B"
+author: "Stijn Wittouck"
+date: "15th of June 2017"
+output: 
+  html_document:
+    depth: 2
+    number_sections: yes
+    theme: united
+    toc: yes
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = T, message = F, warning = F)
+```
+
+```{r}
+library(tidyverse)
+library(stringr)
+source("function_make_clusterTable.R")
+source("function_make_arrowPlotTable.R")
+source("function_order_contigs.R")
+```
+
+# Data preparation
+
+We start by loading all tables we will need: 
+
+* **T_gene** (the version with gene coordinates in the genome (as opposed to in the contigs))
+* **T_contig** (the version with contig coordinates in the genomes)
+* **T_genome**
+* **T_orthogroup**
+
+```{r}
+load(file = "intermediate/T_gene_withCo.Robject")
+load(file = "intermediate/T_contig_withCo.Robject")
+load(file = "intermediate/T_genome.Robject")
+load(file = "intermediate/T_orthogroup.Robject")
+```
+
+Let's make a view (a secondary table derived from primary tables) that is basically a large gene table with all possible info, with strain and genome names ordered according to the tree and a new variable "geneFunction" that is equal to cazyFam but that we can extend later (e.g. secretion systems). 
+
+```{r}
+V_gene_large <- left_join(T_gene_withCo, T_orthogroup) %>%
+  left_join(T_genome) %>%
+  left_join(T_contig_withCo) %>%
+  mutate(geneFunction = str_replace(cazyFam, ".hmm", "")) %>%
+  within(geneFunction[is.na(geneFunction)] <- "unknown")
+```
+
+# Clade B specific GT-rich gene cluster
+
+Something very interesting is that both long gene 1 one and long gene 2 are very enriched in Ser risidues. The baseline frequency of Ser is 8.1%. In AMBR2, long gene 1 has 15% Ser residues (457 out of 2955) and long gene 2 38% (2802 out of 7370). 
+
+We will add some functional information to the data to use in the plots, based on Prokka functional annotation, BLAST searches.
+
+```{r}
+orthogroupsLongGene1 <- c("OG0004255", "OG0005234")
+orthogroupsSecretionSystem <- c("OG0002235", "OG0003634", "OG0003674", "OG0003727", "OG0003893")
+
+V_gene_large <- within(V_gene_large, expr = {
+  geneFunction[orthogroup %in% orthogroupsLongGene1] <- "srr1"
+  geneFunction[orthogroup == "OG0003635"] <- "srr2"
+  geneFunction[orthogroup %in% orthogroupsSecretionSystem] <- "SecA2/SecY2 system"
+  geneFunction[orthogroup == "OG0000546"] <- "methionine aminopeptidase"
+  geneFunction[orthogroup == "OG0001215"] <- "phosphomevalonate kinase"
+  geneFunction[orthogroup == "OG0000733"] <- "transferase"
+})
+```
+
+The first orthogroup of the cluster is OG0000546. It is present in only 9 of the 10 genomes so we use the second orthogroup (OG0001645) as "reference" for making the plot. We first single out the genes of this cluster in a separate table. We want to collect all genes within the interval starting 1500 bases before the reference and 60000 bases after the reference. 
+
+```{r}
+V_GtCluster = V_gene_large %>%
+  filter(clade == "cladeB") %>%
+  make_clusterTable(orthogroup = "OG0001645", before = -4500, after = 57000)
+```
+
+Now we can plot the gene cluster: 
+
+```{r}
+
+V_GtCluster_forPlot = make_arrowPlotTable(V_GtCluster)  %>%
+  mutate(geneFunction = ifelse(str_detect(geneFunction, "GH"), "unknown", geneFunction))
+
+ggplot(V_GtCluster_forPlot, aes(x = x, y = y, group = gene, fill = geneFunction)) +
+  geom_polygon() +
+  geom_vline(aes(xintercept = contig_start), linetype = 2, size = 1) +
+  scale_fill_brewer(palette = "Paired") + 
+  facet_wrap(~ strain_ordered, scales = "fixed", ncol = 1) +
+  xlab("") + ylab("") +
+  theme(panel.background = element_rect(fill = 'white', colour = 'black'),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) 
+ggsave(filename = "results/GT_rich_cluster_cladeB.png", height = 25, width = 50, units = "cm")
+
+```
+
+These orthogroups have the following distributions over the genomes:
+
+```{r}
+
+V_nGenomesWithOrthogroup = T_gene_withCo %>%
+  select(orthogroup, genome) %>%
+  mutate(orthogroup = ifelse(orthogroup == "OG0005234", "OG0004255", orthogroup)) %>%
+  distinct() %>%
+  left_join(T_genome) %>%
+  group_by(orthogroup, clade) %>%
+  summarize(nGenomes = n()) %>%
+  spread(key = clade, value = nGenomes, fill = 0)
+
+V_GtCluster_orthogroupDistributions <- V_GtCluster %>%
+  filter(genome == "AMBR2") %>%
+  arrange(start_inGenome) %>%
+  mutate(position = 1:n()) %>%
+  mutate(geneLength = stop - start + 1) %>%
+  select(position, geneFunction, orthogroup, eggnogFam, geneLength) %>%
+  left_join(V_nGenomesWithOrthogroup)
+
+options(tibble.print_max = Inf)
+V_GtCluster_orthogroupDistributions
+options(tibble.print_max = 10)
+
+write_csv(V_GtCluster_orthogroupDistributions, path = "results/cladeBSpecificGtClusterOrthogroupDistributions.csv")
+
+```
+
+Long gene 2 is also present in two clade A genomes! What's that all about?!
+
+```{r}
+
+V_GtCluster = V_gene_large %>%
+  filter(clade == "cladeA") %>%
+  make_clusterTable(orthogroup = "OG0003635", before = 30000, after = 30000)
+
+V_GtCluster_forPlot = make_arrowPlotTable(V_GtCluster)  %>%
+  mutate(geneFunction = ifelse(str_detect(geneFunction, "GH"), "unknown", geneFunction))
+
+ggplot(V_GtCluster_forPlot, aes(x = x, y = y, group = gene, fill = geneFunction)) +
+  geom_polygon() +
+  geom_vline(aes(xintercept = contig_start), linetype = 2, size = 1) +
+  scale_fill_brewer(palette = "Paired") + 
+  facet_wrap(~ strain_ordered, scales = "fixed", ncol = 1) +
+  xlab("") + ylab("") +
+  theme(panel.background = element_rect(fill = 'white', colour = 'black'),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) 
+ggsave(filename = "results/longGene2_cladeA.png", height = 25, width = 50, units = "cm")
+
+```
+
+In one of these, there is also a secretion system and a GT4! In the other one, this might also be the case, but unfortunately a contig boundary prevents us from assassing this. 
+
+Let's check out the secretion system in context everywhere where it is present. We use the SecY2 orthogroup as reference, because we are not interested in the "sole SecA2" system. 
+
+```{r}
+
+V_GtCluster = V_gene_large %>%
+  filter(clade %in% c("cladeA", "cladeC")) %>%
+  make_clusterTable(orthogroup = "OG0003634", before = 30000, after = 30000)
+
+V_GtCluster_forPlot = make_arrowPlotTable(V_GtCluster)  %>%
+  mutate(geneFunction = ifelse(str_detect(geneFunction, "GH"), "unknown", geneFunction))
+
+ggplot(V_GtCluster_forPlot, aes(x = x, y = y, group = gene, fill = geneFunction)) +
+  geom_polygon() +
+  # geom_vline(aes(xintercept = contig_start), linetype = 2, size = 1) +
+  scale_fill_brewer(palette = "Paired") + 
+  facet_wrap(~ strain, scales = "fixed", ncol = 1) +
+  xlab("") + ylab("") +
+  theme(panel.background = element_rect(fill = 'white', colour = 'black'),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) 
+ggsave(filename = "results/secretionSystem_cladesAC.png", height = 25, width = 50, units = "cm")
+
+```

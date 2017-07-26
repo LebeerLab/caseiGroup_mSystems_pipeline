@@ -1,0 +1,220 @@
+---
+title: "GC Content"
+author: "Sander Wuyts"
+date: "09 03 2017"
+output:
+  html_document:
+    highlight: tango
+    toc: true
+    toc_float: true
+---
+
+# Quast GC
+
+```{R}
+genomeTable_full <- read.table("/media/harddrive/caseiGroup/04a_quality_control/genomeTable_full.tsv",header=T,sep="\t")
+genomesClades <- read.table("/media/harddrive//caseiGroup/Trees/genomeTableWithClades.tsv")
+genomeTable_full$clade <- genomesClades[which(genomeTable_full$Assembly%in%genomesClades$V1),"V3"]
+```
+
+```{R}
+genomeTable_full$species <- factor(genomeTable_full$species,levels=c("casei","paracasei","rhamnosus","zeae","sp","isolate"))
+
+aggregate(genomeTable_full[,c('species','GC')], by=list(genomeTable_full$species), FUN=mean, na.rm=TRUE)
+
+factor(genomeTable_full$clade,levels=c("cladeA","cladeB","cladeC"))
+
+library(ggplot2)
+plot <- ggplot(genomeTable_full,aes(x=species,y=GC))
+plot + geom_jitter(aes(colour=clade),width=0.3, height=0, alpha=0.8) + scale_color_manual(values=c('#e41a1c','#377eb8','#4daf4a')) + theme_bw() +
+  scale_x_discrete(labels=c("casei" = "Lactobacillus casei", "isolate" = "AMBR2", "paracasei" = "Lactobacillus paracasei", "rhamnosus" = "Lactobacillus rhamnosus", "zeae" = "Lactobacillus zeae","sp" = "Lactobacillus sp.")) +
+  theme(axis.text.x = element_text(face=c("bold.italic","bold.italic","bold.italic","bold.italic","bold.italic","bold"), angle=45, hjust=1,vjust=1)) +
+  xlab("")
+```
+
+# Read in data
+
+```{R,eval=F}
+library(stringr)
+setwd("/media/harddrive/caseiGroup/04b_gc_content/outfiles")
+
+file_list <- list.files('/media/harddrive/caseiGroup/04b_gc_content/outfiles')
+ 
+for (file in file_list){
+       
+  # if the merged dataset doesn't exist, create it
+  if (!exists("dataset")){
+    dataset <- read.table(file, header=TRUE, sep="\t",quote="")
+    dataset$Genome <- unlist(str_split(file,pattern='\\.'))[1] 
+    } else {
+    temp_dataset <-read.table(file, header=TRUE, sep="\t",quote="")
+    temp_dataset$Genome <- unlist(str_split(file,pattern='\\.'))[1]
+    dataset<-rbind(dataset, temp_dataset)
+    rm(temp_dataset)
+    
+  }
+}
+
+saveRDS(dataset,file="/media/harddrive/caseiGroup/04b_gc_content/GC_content_per_gene_caseigroup.Robject")
+```
+
+
+# Calculate meanGC
+
+plot mean GC
+
+```{R}
+setwd('/media/harddrive/caseiGroup/04b_gc_content/')
+dataset <- readRDS(file='GC_content_per_gene_caseigroup.Robject')
+meanGC <- aggregate(X.GC~Genome,data=dataset, mean)
+
+# Add species
+names(genomesClades) <- c("Genome","Source","clade")
+
+meanGC <- merge(meanGC,genomesClades,all.x=T,all.y=T)
+
+plot <- ggplot(meanGC,aes(x=clade,y=X.GC))
+plot + geom_jitter(aes(colour=Source))  +theme_bw()
+
+```
+
+# Weighted meanGC
+
+```{R}
+weightedmeanGC <- sapply(split(dataset, dataset$Genome), function(d) weighted.mean(d$X.GC, w = d$Length))
+weightedmeanGCdf <- as.data.frame(weightedmeanGC)
+weightedmeanGCdf$Genome <- row.names(weightedmeanGCdf)
+names(weightedmeanGCdf)[1] <- 'X.GC'
+
+weightedmeanGCdf <- merge(weightedmeanGCdf,genomesClades,all.x=T,all.y = T)
+
+plot <- ggplot(weightedmeanGCdf)
+plot + geom_jitter(aes(x=clade,y=X.GC,colour=Source)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=45,vjust=1,hjust=1)) + 
+  ylab("GC percentage coding region") +
+  xlab(" ")
+```
+
+# GC content next level
+
+First let's read in the phylogenetic tree to get the in order to be able to reorder the genomes according to their phylogenetic structure
+
+```{r}
+library(ggtree)
+library(ape)
+
+tree <- read.tree('/media/harddrive/caseiGroup/Trees/RAxML_bipartitions.caseigroup')
+
+# Root tree
+tree_r <- ape::root(tree, "outgroup")
+# Remove outgroup
+tree_r_wooutroup <- drop.tip(tree_r, "outgroup")
+
+# Test ggtree
+p <- ggtree(tree_r_wooutroup) +  geom_tree()
+p
+
+
+
+# Get the label order
+d <- fortify(tree_r_wooutroup)
+dd <- subset(d, isTip)
+tree_order <- dd$label[order(dd$y,decreasing=T)]
+```
+
+Now lets' go on:
+
+```{R}
+dataset <- merge(dataset,genomesClades,all.x=T)
+dataset$Genome <- as.factor(dataset$Genome)
+```
+
+At this point, we save the dataset so that Stijn can also use it for visualization and stuff on his local machine:
+
+```{r}
+save(dataset, file = "GC_table_forStijn.Robject")
+```
+
+Plot of all GC content per gene of each genome as points
+```{R}
+dataset$Genome_reorderd <- factor(dataset$Genome,levels=tree_order,ordered=T)
+plot <- ggplot(dataset)
+plot + geom_jitter(aes(x=X.GC, y=Genome_reorderd,colour=clade),width=0,size=0.1, alpha=0.1) +
+  scale_color_manual(values=c("#a65628","#1b9e77", "#984ea3")) + theme_bw() +
+  xlab("GC %") + ylab("") +
+  theme(axis.text.y=element_text(size=4)) +
+  guides(colour = guide_legend(override.aes = list(size=5,alpha=1)))
+
+#dev.copy2pdf(file="/media/harddrive//caseiGroup/GC_content/GC_contentpergene.pdf",out.type="cairo", width=10, height=7.5)
+```
+Plot of all GC content per gene of each genome as densities
+```{R}
+plot <- ggplot(dataset)
+plot + geom_density(aes(X.GC,colour=clade, group=Genome), size=0.2,alpha=0.5) +
+  scale_color_manual(values=c("#a65628","#1b9e77", "#984ea3")) + 
+  theme_bw()
+```
+
+```{R}
+plot <- ggplot(dataset, aes(X.GC))
+plot + geom_density(aes(colour=clade)) +
+ geom_jitter(aes(y=-1*ifelse(clade=="cladeA",0.1,ifelse(clade=="cladeB",0.2,0.3)),x=X.GC,colour=clade),height=0.05, width=0,size=0.01)+
+  scale_color_manual(values=c("#a65628","#1b9e77", "#984ea3")) +
+  theme_bw() +
+  scale_y_continuous(limits=c(-0.35,0.2),breaks=c(0,0.2))
+    
+  
+ 
+```
+
+Unimodality test
+
+```{r}
+#library(diptest)
+#dip(dataset[which(dataset$clade=="cladeC"),"X.GC"])
+```
+
+GC vs length
+
+```{r}
+plot <- ggplot(dataset)
+plot + geom_point(aes(x=X.GC,y=Length, colour=clade), size=0.2,alpha=0.5) +
+  scale_color_manual(values=c("#a65628","#1b9e77", "#984ea3"))  + 
+  facet_wrap(~clade) +
+  theme_bw()
+```
+
+Cool! There are two very big genes in cladeB.
+
+## Clade B only
+
+I do think I see some abnormality in the first two graphs above in clade B. So let's only plot clade B.
+
+```{r}
+dataset_cladeB <- dataset[which(dataset$clade=="cladeB"),]
+plot <- ggplot(dataset_cladeB)
+plot + geom_jitter(aes(x=X.GC, y=Genome_reorderd,colour=clade),width=0,size=0.1, alpha=0.1) +
+  scale_color_manual(values=c("#1b9e77")) + theme_bw() +
+  xlab("GC %") + ylab("") +
+  theme(axis.text.y=element_text(size=15)) +
+  guides(colour = guide_legend(override.aes = list(size=5,alpha=1)))
+```
+
+```{r}
+plot <- ggplot(dataset_cladeB)
+plot + geom_density(aes(X.GC,colour=clade, group=Genome), size=0.2,alpha=0.5) +
+  scale_color_manual(values=c("#1b9e77")) + 
+  theme_bw()
+```
+
+Let's look at genes with GC content between 52 -55
+
+```{r}
+plot <- ggplot(dataset_cladeB[which(dataset_cladeB$X.GC>52 & dataset_cladeB$X.GC<55),])
+plot + geom_density(aes(X.GC,colour=clade, group=Genome), size=0.2,alpha=0.5) +
+  scale_color_manual(values=c("#1b9e77"))  +
+  theme_bw()
+```
+
+

@@ -1,0 +1,19 @@
+#!/bin/bash -l
+#PBS -l walltime=10:00:00
+#PBS -l nodes=2:ppn=20
+
+module load RAxML/8.2.9-intel-2016b-hybrid-avx
+
+cd ${VSC_DATA}/caseiGroup_tree
+
+cat $PBS_NODEFILE | uniq > machinefile
+
+mpirun -n 10 -machinefile machinefile \
+raxmlHPC-HYBRID-AVX -T 4 -f a \
+-m GTRCAT \
+-p 1991 \
+-x 1991 -N autoMRE \
+-s core_gene_alignment_withOutgroup.aln \
+-n caseigroup
+
+rm machinefile

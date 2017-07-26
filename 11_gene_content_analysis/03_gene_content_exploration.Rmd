@@ -1,0 +1,190 @@
+---
+title: "General exploration of gene content in Casei group genomes"
+author: "Stijn Wittouck"
+date: "15th of June 2017"
+output: 
+  html_document:
+    depth: 2
+    number_sections: yes
+    theme: united
+    toc: yes
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = T, message = F, warning = F)
+```
+
+```{r}
+library(tidyverse)
+library(stringr)
+library(vegan)
+source(file = "function_make_pcoaTable.R")
+```
+
+# Loading the data
+
+We start by reading in the necessary tables. 
+
+```{r}
+load(file = "intermediate/V_genome_orthogroup.Robject")
+load(file = "intermediate/T_genome.Robject")
+load(file = "intermediate/T_orthogroup.Robject")
+load(file = "intermediate/T_eggnogFam_functCat.Robject")
+T_functCat <- read_tsv(file = "input/functCat_descriptions.tsv")
+```
+
+# Summary statistics of casei group and clades
+
+We want the following information for each clade: number of genomes, number of core orthogroups, number of accessory orthogroups, average number of orthogroups per genome, average number of genes per genome. 
+
+```{r}
+
+calculateCladeStatistics <- function(V_genome_orthogroup) {
+  
+  part1 <- V_genome_orthogroup %>%
+    select(genome) %>%
+    distinct() %>%
+    summarise(nGenomes = n())
+  nGenomesTot <- part1[[1]][1]
+  
+  part2 <- V_genome_orthogroup %>%
+    group_by(orthogroup) %>%
+    summarise(ngenomes = sum(ngenes != 0)) %>%
+    summarise(nCoreOrthogroups = sum(ngenomes >= (0.96 * nGenomesTot)), 
+              nAccOrthogroups = sum(ngenomes < (0.96 * nGenomesTot)))
+  
+  part3 <- V_genome_orthogroup %>%
+    group_by(genome) %>%
+    summarise(nOrthogroups = sum(ngenes != 0), nGenes = sum(ngenes)) %>%
+    summarise(avnOrthogroups = mean(nOrthogroups), avnGenes = mean(nGenes),
+              sdnOrthogroups = sd(nOrthogroups), sdnGenes = sd(nGenes))
+  
+  return(cbind(part1, part2, part3))
+  
+}
+
+left_join(V_genome_orthogroup, T_genome) %>%
+  list(
+    ., 
+    filter(., clade == "cladeA"),
+    filter(., clade == "cladeB"),
+    filter(., clade == "cladeC")
+  ) %>%
+  lapply(FUN = calculateCladeStatistics) %>%
+  bind_rows() %>%
+  mutate(clade = c("casei group", "clade A", "clade B", "clade C")) %>%
+  column_to_rownames(var = "clade")
+
+```
+
+# Visualization of gene content comparisons 
+
+## PCoA for all orthogroups
+
+Let's make a PCoA plot of the overall pairwise distances between genomes in terms of gene content (Bray-Curtis). The colors match the ones used in the tree figures. 
+
+```{r}
+# make table with pcoa coordinates for all genomes 
+# also add genome info (clade, species)
+T_pcoa1 <- make_pcoaTable(V_genome_orthogroup) %>%
+  left_join(T_genome)
+
+# same clade colors as in trees
+cladeColors <- c("cladeA" = "#e41a1c", "cladeB" = "#377eb8", "cladeC" = "#4daf4a")
+
+# plot and save
+ggplot(T_pcoa1, aes(x = V1, y = V2, col = clade, shape = species)) +
+  geom_point() +
+  scale_color_manual(values = cladeColors) +
+  theme(panel.background = element_rect(fill = 'white', colour = 'black'))
+ggsave(filename = "results/pcoa_overall.png", height = 20, width = 30, units = "cm")
+```
+
+## PCoA per functional category
+Next, we can do the same, but per functional category. Some important things to keep in mind:
+
+* It is important to realize that several orthogroups are present in multiple functional categories!! So these are represented in multiple sub-plots. 
+* We will remove functional categories with less than 20 orthogroups from the figure because there is too little information to "resolve" all points (genomes) in the pcoa plot. 
+* The distances between genomes are percentages, not of a number of orthogroups but of a number of genes!! It would of course be possible to change this to orthogroup presence/absence instead of considering the numbers of genes. This would yield a slightly different graph. 
+* The large majority of the orthogroups has no known function! 
+
+```{r}
+# make table with genome, orthogroup, ngenes and funct cat
+# remark: mutate step is to make sure that orthogroups without
+# eggnogFam hit get functional category "S" (function unknown)
+T_pcoa2 <- left_join(V_genome_orthogroup, T_orthogroup) %>%
+  left_join(T_eggnogFam_functCat) %>%
+  select(genome, orthogroup, ngenes, functCat) %>%
+  mutate(functCat = ifelse(is.na(functCat), "S", functCat))
+
+# make table with number of orthogroups per functional category
+T_nOrthogroupsPerFunctCat <- T_pcoa2 %>%
+  select(orthogroup, functCat) %>%
+  distinct() %>%
+  group_by(functCat) %>%
+  summarise(n = n()) %>%
+  left_join(T_functCat) %>%
+  mutate(functCatDescription = str_c(functCat, " (n = ", n, ")", "\n", str_wrap(description, width= 55)))
+
+# do pcoa per functional category and add genome info
+T_pcoa2 <- T_pcoa2 %>%
+  split(f = .$functCat) %>%
+  lapply(FUN = function(table) {
+    if (nrow(table) <= 5) return(NULL)
+    functionalCategory = table$functCat[1]
+    make_pcoaTable(table) %>%
+      mutate(functCat = functionalCategory) %>%
+      mutate(V1 = V1 - (min(V1) + max(V1)) / 2,
+             V2 = V2 - (min(V2) + max(V2)) / 2) %>%     
+      return()
+  }) %>% bind_rows() %>%
+  left_join(T_genome)
+
+# add number of orthogroups per functional category info
+T_pcoa2 <- left_join(T_pcoa2, T_nOrthogroupsPerFunctCat)
+
+# print categories not included in pcoa plot
+T_pcoa2 %>%
+  select(functCat, n) %>%
+  distinct() %>%
+  arrange(n)
+
+# remove functional categories with too few orthogroups
+T_pcoa2 <- filter(T_pcoa2, n > 20)
+
+# make and save plot! 
+ggplot(T_pcoa2, aes(x = V1, y = V2, col = clade)) +
+  geom_point(alpha=0.8) +
+  xlim(c(-0.3, 0.3)) + ylim(c(-0.3, 0.3)) +
+  scale_color_manual(values = cladeColors) +
+  facet_wrap(~ functCatDescription, ncol = 4) +
+  theme(panel.background = element_rect(fill = 'white', colour = 'black'))
+ggsave(filename = "results/pcoa_perFunctCat.png", height = 40, width = 35, units = "cm")
+```
+
+## Number of orthogroups per genome, by functional category
+
+```{r}
+# make table with genome, orthogroup, ngenes and funct cat
+# remark: mutate step is to make sure that orthogroups without
+# eggnogFam hit get functional category "S" (function unknown)
+T_plot <- left_join(V_genome_orthogroup, T_orthogroup) %>%
+  left_join(T_eggnogFam_functCat) %>%
+  mutate(functCat = ifelse(is.na(functCat), "S", functCat)) %>%
+  left_join(T_nOrthogroupsPerFunctCat) %>%
+  select(genome, orthogroup, ngenes, functCatDescription) %>%
+  left_join(T_genome) %>%
+  group_by(functCatDescription, clade, species, genome) %>%
+  summarise(nOrthogroups = n(), nGenes = sum(ngenes)) %>%
+  ungroup()
+
+ggplot(T_plot, aes(x = clade, y = nGenes, col = clade)) +
+  geom_jitter(width = 0.2) +
+  expand_limits(y = 0) +
+  scale_color_manual(values = cladeColors) +
+  facet_wrap(~ functCatDescription, ncol = 4, scales = "free_y") +
+  theme(panel.background = element_rect(fill = 'white', colour = 'black'))
+ggsave(filename = "results/nGenes_perFunctCat.png", height = 40, width = 35, units = "cm")
+```
+

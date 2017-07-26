@@ -1,0 +1,18 @@
+pout=/media/harddrive/caseiGroup/interest_driven/extract_refSeqs_fromOrthofinder
+pin=/media/harddrive/caseiGroup/orthofinder/Sequences/
+
+cd $pout
+
+echo MAKE EMPTY FASTA FILE OR EMPTY EXISTING FILE
+echo
+> pan_genome_reference.fasta
+echo
+
+echo MAKE REPRESENTATIVE SEQUENCES FASTA WITH GROUP NAMES, FROM ORTHOFINDER
+echo
+for fastaFile in $(ls ${pin}); do
+        python extract_firstSeq_fromFasta.py ${pin}${fastaFile} >> pan_genome_reference.fasta
+done
+echo
+
+

@@ -1,0 +1,140 @@
+---
+title: "Quality control of Casei Group genomes"
+author: "Stijn Wittouck & Sander Wuyts"
+date: "21/02/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(stringr)
+
+# # if on Stijn's laptop:
+# quastReportFile = "data/transposed_report.tsv"
+# ncbi_summary_file1 = "data/assembly_summary_caseigroup.txt"
+# ncbi_summary_file2 = "data/assembly_summary_sp.txt"
+
+# if on Rhambo
+wd = "/media/harddrive/caseiGroup/quality_control"
+setwd(wd)
+quastReportFile = "//media/harddrive/caseiGroup/quality_control/qc_quast_allGenomes_results/transposed_report.tsv"
+ncbi_summary_file1 = "/media/harddrive/caseiGroup/download_genomes/assembly_summary_caseigroup.txt"
+ncbi_summary_file2 = "/media/harddrive/caseiGroup/add_Unclassified/assembly_summary_sp.txt"
+
+# read quast report file
+report = read.table(quastReportFile, header=T, sep="\t", comment.char="", quote="")
+# column names: replace any number of points by one underscore
+names(report) = str_replace_all(names(report), "\\.+", "_")
+# column names: remove trailing underscore
+names(report) = str_replace(names(report), "\\_$", "")
+# column names: replace X by N (number of...)
+names(report) = str_replace(names(report), "X", "N")
+
+# read NCBI data file
+ncbi_data1 = read.table(ncbi_summary_file1, sep="\t", header=F)
+ncbi_data2 = read.table(ncbi_summary_file2, sep="\t", header=F)
+ncbi_data = rbind(ncbi_data1,ncbi_data2)
+# give column names (taken from full assembly_summary.txt file)
+names(ncbi_data) = c("assembly_accession", "bioproject", "biosample", "wgs_master", "refseq_category","taxid", "species_taxid",  "organism_name", "infraspecific_name", "isolate", "version_status", "assembly_level", "release_type",  "genome_rep", "seq_rel_date", "asm_name", "submitter", "gbrs_paired_asm", "paired_asm_comp","ftp_path",  "excluded_from_refseq")
+# assembly accession numbers: take only part before the dot (to match accession numbers in quast table)
+ncbi_data$assembly_accession = str_match(ncbi_data$assembly_accession, "(.*)( |\\.)")[,2]
+
+# make super table with all info (ncbi and quast)
+genomeTable = merge(report, ncbi_data, by.x="Assembly", by.y="assembly_accession", all.x=T)
+
+# make extra column with species name only (no strain names)
+genomeTable$species = str_match(genomeTable$organism_name, "Lactobacillus ([a-z]*)")[,2]
+# give species name "isolate" to the isolate genomes
+genomeTable$species[is.na(genomeTable$species)] = "isolate"
+```
+
+# Summary of genomes before filtering
+
+```{r, echo=FALSE}
+sprintf("total number of genomes: %i", nrow(report))
+```
+
+```{r, echo=FALSE}
+genomeTable %>%
+  group_by(species) %>%
+  summarize(nGenomes = n())
+```
+
+# Quality parameters: N75 and undetermined bases
+
+Let's check the distribution of the N75 values:
+
+```{r, echo=FALSE}
+ggplot(data=genomeTable, aes(x=N75)) +
+  geom_density(aes(group=NULL)) +
+  geom_jitter(aes(y=(-0.05 - 0.05*ifelse(species=="isolate", 1, 0)),
+                  col=species, width=0, height=0.01)) +
+  scale_x_log10() +
+  scale_color_brewer(palette="Paired", name="species") +
+  geom_vline(xintercept=10000)
+```
+
+We'll put the cut-off at 10.000bp. Remark: this value was partly chosen because in a previous run of the whole pipeline, genomes with an N75 < 10kbp had a larger number of missing core genes than other genomes. 
+
+Let's plot the N75 values along with another QC parameter: the number of undetermined bases per 100.000 bases. 
+
+```{r, echo=FALSE}
+ggplot(data=genomeTable, aes(x=N_N_s_per_100_kbp, y=N75, col=species)) +
+  geom_point() +
+  scale_y_log10() +
+  scale_x_log10() +
+  scale_color_brewer(palette="Paired", name="species") +
+  geom_hline(yintercept=10000) +
+  geom_vline(xintercept=500)
+
+# Make extra variable with selected genomes
+genomeTable$useGenome = genomeTable$N75 > 10000 & genomeTable$N_N_s_per_100_kbp < 500
+```
+
+For "number of N's per 100kbp" we will put the cut-off on 500. 
+
+# Genome parameters: GC content and genome length
+
+Now we can plot genome parameters: GC content and genome length. We do this for all genomes. 
+
+```{r, echo=FALSE}
+# genome length vs GC plot for all genomes
+ggplot(data=genomeTable, aes(x=Total_length, y=GC, col=species)) +
+  geom_point() +
+  scale_color_brewer(palette="Paired", name="species")
+```
+
+There seems to be a GC outlier (the spicheri genome) and a length outlier (a rhamnosus). Let's remove them (along with genomes that failed N75 and "number of N's" QC) and plot again: 
+
+```{r, echo=FALSE}
+# Make extra variable with selected genomes
+genomeTable$useGenome = genomeTable$useGenome & genomeTable$Total_length < 4e6 & genomeTable$GC < 50
+
+# Species and GC of "genomesToUse"
+ggplot(data=genomeTable[genomeTable$useGenome,], aes(x=species, y=GC, col=species)) +
+  geom_jitter(height=0, width=0.3) +
+  scale_color_brewer(palette="Paired", name="species")
+
+# Summary
+sprintf("total number of genomes: %i", nrow(report))
+sprintf("number of genomes that passed QC: %i", sum(genomeTable$useGenome))
+```
+
+```{r, echo=FALSE}
+genomeTable %>%
+  filter(useGenome) %>%
+  group_by(species) %>%
+  summarize(nGenomes = n())
+```
+
+```{r, echo=FALSE}
+# Write file with all information of selected genomes
+write.table(genomeTable[genomeTable$useGenome,], file="genomeTable_full.tsv",
+            quote=F, col.names=T, row.names=F, sep="\t")
+
+# Write table accession numbers and species names of selected genomes
+write.table(genomeTable[genomeTable$useGenome,c("Assembly", "species")], file="genomeTable.tsv",
+            quote=F, col.names=F, row.names=F, sep="\t")
+```
+

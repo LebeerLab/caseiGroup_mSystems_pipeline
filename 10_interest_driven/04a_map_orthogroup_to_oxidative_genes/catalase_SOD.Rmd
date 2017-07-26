@@ -1,0 +1,245 @@
+---
+title: "Catalase_SOD"
+author: "Sander Wuyts"
+date: "May 16, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, message = F, warning = F)
+
+library(dplyr)
+library(stringr)
+library(stringi)
+```
+
+# Introduction
+
+Lactobacillus casei N87 is hypothized to be respiration-competent as well as resistant to oxidative stress. Tolerance of oxygen and oxidative stresses may be important in the survival in different environments, including the gut, and during preservation of starter.
+
+The suprising thing is the fact that N87 (GCA_001013375) clusters directly next to AMBR2, in Clade B. So our research question is:
+
+> Do all genomes present in Clade B show tolerance to oxygen and oxidative stress?
+
+# Catalase
+
+## Annotation approach
+
+The dataobject used in the GC analysis contains all the annotated genes of all our studied genomes. This is a very useful starting place for this analysis.
+
+```{r}
+library(ggplot2)
+# Read in dataset
+dataset <- readRDS(file='/media/harddrive/caseiGroup/GC_content/GC_content_per_gene_caseigroup.Robject')
+# Read in which genome belongs to which clade
+genomesClades <- read.table("/media/harddrive/caseiGroup/Trees/genomeTableWithClades.tsv",col.names = c("Genome","Species","Clade"))
+# Merge dfs
+dataset_full <- merge.data.frame(dataset,genomesClades)
+```
+
+Let's search for catalase in the annotation
+
+```{r}
+catalase_pos <-dataset_full[grepl("catalase",dataset_full$Description,ignore.case =T),]
+length(catalase_pos$Genome)
+unique(catalase_pos$Genome)
+catalase_pos[,c("Genome","Clade")]
+```
+
+We found 19 hits in 11 genomes, all belonging to clade B except for 1.
+
+```{r}
+catalase_pos$Genome_reorderd <- factor(catalase_pos$Genome,levels=unique(catalase_pos$Genome[order(catalase_pos$Clade)]),ordered=T)
+plot <- ggplot(catalase_pos)
+plot1 <- plot + geom_point(aes(y=Genome_reorderd,x=Length,colour=Clade)) 
+plot2 <- plot + geom_point(aes(y=Genome_reorderd,x=X.GC,colour=Clade)) 
+library(gridExtra)
+grid.arrange(plot1,plot2,nrow=2)
+```
+
+Interestingly, we found catalase genes in all 10 clade B's. Moreover in 7/10 we found at least catalase genes!
+
+## Blast approach
+
+In Zotta et al 2014 they give a good overview of studied catalase genes in lactobacillus strains. I’ve found 2 of these genes in the gene database of NCBI (https://www.ncbi.nlm.nih.gov/gene/?term=catalase+lactobacillus) + 1 extra:
+
+* L. plantarum WCFS1 heme dependent catalase (https://www.ncbi.nlm.nih.gov/gene/1062016)
+* L. sakei heme dependent catalase (https://www.ncbi.nlm.nih.gov/gene/29637976)
+* Lactobacillus brevis ATCC 367 catalase (https://www.ncbi.nlm.nih.gov/gene/4413348)
+
+All of these sequences were put together in a file called “Described_catalases.fasta”
+
+Important note. It is claimed that there is a pseudocatalase which is Manganese dependent isolated from L. plantarum ATCC 14431. HOWEVEVER it was very hard to find the sequence of this one (a lot of old papers are cited here). After long digging I’ve found the sequence using the following approach:
+
+* Review paper: Diversity of structures and properties among catalases
+* PDB with number 1JKU at http://www.rcsb.org/pdb/home/home.do
+* http://www.rcsb.org/pdb/explore/remediatedSequence.do?structureId=1JKU
+* Downloaded protein FASTA sequence
+
+To add this sequence to the analysis, I’ve skipped the first step of blastaiganstroary.sh and translated the “Described_catalases.fasta” first then added the protein sequence in a file called described_catalases_all.faa and used that as an input for balstaiganstorthinder.sh.
+
+This resulted in the following top hits per gene:
+
+```{r}
+catalase_blast <- read.table("/media/harddrive/caseiGroup/interest_driven/catalase_SOD_orthogroups/genes_hits_catalase.tsv",header=F)
+colnames(catalase_blast) <- c("query","target","pident","lenght","qcovs")
+
+# Add genome
+catalase_blast$Genome <- catalase_blast$target %>%
+  stri_reverse(.) %>%
+  str_split_fixed(.,"_",3) %>%
+  .[,3] %>%
+  stri_reverse(.)
+
+# Add clade
+catalase_blast <- merge.data.frame(catalase_blast,genomesClades,all.x = T)
+  
+plot <- ggplot(catalase_blast)
+plot + geom_jitter(aes(y=pident,x=qcovs, colour=Clade),alpha=0.5,width=3,height=3) + facet_wrap(~query,nrow=4 ) +
+  xlim(0,100) + ylim(0,100)
+```
+
+Warning, there is some pretty high jitter on the above graph (3% in every direction) to improve visualisation.
+
+This approach confirms our annotation approach:
+
+* 7/10 clade B hits for the manganese catalase
+* 10/10 clade B hits for all other catalases
+* 1 clade C hit, that seems to be fragmented
+
+### PFAM HMMs
+
+As a last de novo approach we’ll be using the HMM of PFAM. We’ll use two, the catalase one and the manganese depndent-catalase:
+
+* http://pfam.xfam.org/family/Catalase#tabview=tab6
+* http://pfam.xfam.org/family/PF05067#tabview=tab6
+
+Then ran hmmscan in the script ‘scan_catalase_hmms_against_orthofinder.sh’ and now we can read in the output here:
+
+```{r}
+catalase_hmm <- read.table("/media/harddrive/caseiGroup/interest_driven/catalase_SOD_orthogroups/HMMscan/catalase/scan_catalase.out",header=F)
+names(catalase_hmm)[1:10] <- c("target_name","target_length","query_name","query_length","Evalue","hmm_coord_from","hmm_coord_to","query_coord_from","query_coord_to","percent_coverage")
+
+# Add genome
+catalase_hmm$Genome <- catalase_hmm$query_name %>%
+  stri_reverse(.) %>%
+  str_split_fixed(.,"_",3) %>%
+  .[,3] %>%
+  stri_reverse(.)
+
+# Add clade
+catalase_hmm <- merge.data.frame(catalase_hmm,genomesClades,all.x = T)
+  
+plot <- ggplot(catalase_hmm)
+plot + geom_jitter(aes(y=Evalue,x=percent_coverage, colour=Clade),alpha=0.7) + facet_wrap(~target_name,nrow=2)
+```
+
+These results, again confirm our findings.
+
+## Conclusion
+
+* 7/10 clade B hits for the manganese catalase
+* 10/10 clade B hits for heme catalases
+* 1 clade C hit, that seems to be fragmented
+
+# SOD
+
+Super oxide dismutase is another very important enzyme in scavenging O2 radicals. It is not found in lactobacillus in general.
+
+## Annotation approach
+
+```{r}
+sod_pos <-dataset_full[grepl("superoxide dismutase",dataset_full$Description,ignore.case =T),]
+length(sod_pos$Genome)
+unique(sod_pos$Genome)
+sod_pos[,c("Genome","Clade")]
+```
+
+We found 69 hits in 69 genomes, all belonging to clade A.
+
+```{r}
+sod_pos$Genome_reorderd <- factor(sod_pos$Genome,levels=unique(sod_pos$Genome[order(sod_pos$Clade)]),ordered=T)
+plot <- ggplot(sod_pos)
+plot1 <- plot + geom_point(aes(y=Genome_reorderd,x=Length,colour=Clade)) 
+plot2 <- plot + geom_point(aes(y=Genome_reorderd,x=X.GC,colour=Clade)) 
+library(gridExtra)
+grid.arrange(plot1,plot2,nrow=2)
+```
+
+Apparently it’s only found in CladeA.
+
+## Blast Approach
+
+There’s only one good described SOD gene for lactobacillus from lactobacillus casei Lc18 which has been sort of functionally tested by expression in e coli (http://link.springer.com/article/10.1007%2Fs13213-011-0237-2). If you blast that we get this:
+
+```{r}
+sod_blast <- read.table("/media/harddrive/caseiGroup/interest_driven/catalase_SOD_orthogroups/genes_hits_sod.tsv",header=F)
+colnames(sod_blast) <- c("query","target","pident","lenght","qcovs")
+
+# Add genome
+sod_blast$Genome <- sod_blast$target %>%
+  stri_reverse(.) %>%
+  str_split_fixed(.,"_",3) %>%
+  .[,3] %>%
+  stri_reverse(.)
+
+# Add clade
+sod_blast <- merge.data.frame(sod_blast,genomesClades,all.x = T)
+length(sod_blast$Genome)
+length(unique(sod_blast$Genome))
+```
+
+Again, we found 69 hits in 69 genomes, all belonging to cladeA.
+
+
+```{r}  
+plot <- ggplot(sod_blast)
+plot + geom_jitter(aes(y=pident,x=qcovs, colour=Clade),alpha=0.5,width=3,height=3) + facet_wrap(~query,nrow=4 ) +
+  xlim(0,103) + ylim(0,103)
+```
+
+They seem to be pretty good hits!
+
+## Hmm approach
+
+ Let’s confirm this extra by downloading some Hmms from PFAM and scan against those with following HMMS:
+
+* http://pfam.xfam.org/family/PF00080
+* http://pfam.xfam.org/family/PF00081 
+* http://pfam.xfam.org/family/PF02777 
+* http://pfam.xfam.org/family/PF09055
+
+Then ran hmmscan in the script ‘scan_sod_hmms_against_orthofinder.sh’ and now we can read in the output here:
+
+```{r}
+sod_hmm <- read.table("/media/harddrive/caseiGroup/interest_driven/catalase_SOD_orthogroups/HMMscan/SOD/scan.out",header=F)
+names(sod_hmm)[1:10] <- c("target_name","target_length","query_name","query_length","Evalue","hmm_coord_from","hmm_coord_to","query_coord_from","query_coord_to","percent_coverage")
+
+# Add genome
+sod_hmm$Genome <- sod_hmm$query_name %>%
+  stri_reverse(.) %>%
+  str_split_fixed(.,"_",3) %>%
+  .[,3] %>%
+  stri_reverse(.)
+
+# Add clade
+sod_hmm <- merge.data.frame(sod_hmm,genomesClades,all.x = T)
+
+length(sod_hmm$Genome)
+length(unique(sod_hmm$Genome))
+``` 
+
+There are 73 hits in 69 genomes
+
+
+```{r}
+plot <- ggplot(sod_hmm)
+plot + geom_jitter(aes(y=Evalue,x=percent_coverage, colour=Clade),alpha=0.7) + facet_wrap(~target_name,nrow=2) + xlim(0,1)
+```
+
+Same results!
+
+## Conclusion
+
+SOD is found only in clade A and in 69 of 70 genomes.
+

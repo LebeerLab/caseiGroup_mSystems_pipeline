@@ -1,0 +1,13 @@
+1. Download NCBI summary file
+2. Download all fna from 'Lactobacillus sp.'
+3. Downloaded RDP database manually trough website with following criteria
+	a) Only cultured isolates
+	b) size > 1200 nt
+	c) Good quality
+	d) Genus Lactobacillus
+4. remove gaps from database using degapseq
+5. remove spaces from fasta headers
+6. use ./blastagainstrdp against the prebuild RDP database
+7. Inspect best hits files manually
+8. Save all casei/paracasei/rhamnosus to a new file "GenomesToUse.txt"
+9. Run cp_caseigrouphits_fna.sh to copy all these genomes to the right folder
